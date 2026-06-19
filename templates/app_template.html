@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Карта материалов</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#181310; --panel:#221b16; --panel-2:#2b2219;
+    --line: rgba(242,234,224,0.12);
+    --text:#f2eae0; --muted:#a8978a;
+    --brass:#c79a5e; --terracotta:#c1683c; --terracotta-soft: rgba(193,104,60,0.18);
+    --sage:#8ea377; --sage-soft: rgba(142,163,119,0.18);
+    --warn:#d99a4e; --warn-soft: rgba(217,154,78,0.16);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;}
+  .wrap{max-width:460px;margin:0 auto;padding:20px 16px 110px;}
+  .eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--brass);font-weight:600;display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+  .eyebrow::before{content:"";width:14px;height:1px;background:var(--brass);display:inline-block;}
+  h1{font-family:'Fraunces',serif;font-weight:500;font-size:24px;line-height:1.15;margin:0 0 8px;letter-spacing:-0.01em;}
+  .lede{color:var(--muted);font-size:13.5px;line-height:1.5;margin:0 0 16px;}
+  .legend{display:flex;gap:14px;margin-bottom:12px;font-size:11px;color:var(--muted);flex-wrap:wrap;}
+  .legend span{display:flex;align-items:center;gap:5px;}
+  .legend i{width:8px;height:8px;border-radius:50%;display:inline-block;}
+  .l-found{background:var(--terracotta);} .l-sel{background:var(--sage);} .l-none{background:var(--brass);opacity:.5;}
+
+  .frame{position:relative;width:100%;border-radius:14px;overflow:hidden;box-shadow:0 30px 60px -20px rgba(0,0,0,0.6),0 0 0 1px var(--line);background:#000;}
+  .frame img{display:block;width:100%;height:auto;}
+  .pin{position:absolute;transform:translate(-50%,-50%);width:26px;height:26px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .pin .ring{position:absolute;inset:0;border-radius:50%;border:1px solid rgba(199,154,94,0.4);animation:pulse 2.6s ease-out infinite;}
+  .pin .core{position:relative;width:11px;height:11px;border-radius:50%;background:linear-gradient(150deg,#cdbfaf,var(--brass));box-shadow:0 0 0 4px rgba(20,16,13,0.55),0 2px 6px rgba(0,0,0,0.5);transition:transform .18s ease;opacity:.55;}
+  .pin.found .core{background:linear-gradient(150deg,#e08a5c,var(--terracotta));opacity:1;}
+  .pin.found .ring{border-color:rgba(193,104,60,0.5);}
+  .pin.selected .core{background:linear-gradient(150deg,#b9cc9e,var(--sage));opacity:1;}
+  .pin.selected .ring{border-color:rgba(142,163,119,0.6);}
+  .pin:hover .core{transform:scale(1.25);}
+  @keyframes pulse{0%{transform:scale(.5);opacity:.9;}80%{transform:scale(1.9);opacity:0;}100%{opacity:0;}}
+
+  .barwrap{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:center;padding:14px 16px calc(14px + env(safe-area-inset-bottom));background:linear-gradient(180deg,rgba(24,19,16,0),var(--bg) 30%);z-index:9;}
+  .bar{max-width:460px;width:100%;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:11px 14px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 10px 30px rgba(0,0,0,0.4);}
+  .bar-prog{font-size:13px;color:var(--muted);}
+  .bar-prog b{color:var(--text);}
+  .bar-btn{background:var(--terracotta);color:#fff;border:none;border-radius:9px;padding:9px 16px;font-size:13.5px;font-weight:600;font-family:'Inter';cursor:pointer;}
+
+  .overlay{position:fixed;inset:0;background:rgba(10,8,6,0.55);backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity .25s ease;z-index:10;}
+  .overlay.show{opacity:1;pointer-events:auto;}
+  .sheet{position:fixed;left:0;right:0;bottom:0;max-width:460px;margin:0 auto;background:var(--panel);border-radius:18px 18px 0 0;box-shadow:0 -10px 40px rgba(0,0,0,0.5);transform:translateY(105%);transition:transform .32s cubic-bezier(.22,1,.36,1);z-index:11;max-height:82vh;overflow-y:auto;padding:22px 20px 28px;border-top:1px solid var(--line);}
+  .sheet.show{transform:translateY(0);}
+  .sheet-handle{width:36px;height:4px;background:var(--line);border-radius:4px;margin:0 auto 16px;}
+  .sheet-eyebrow{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--brass);font-weight:600;}
+  .sheet h2{font-family:'Fraunces',serif;font-weight:500;font-size:21px;margin:6px 0 8px;}
+  .sheet-desc{color:var(--muted);font-size:13.5px;line-height:1.5;margin:0 0 16px;}
+  .close-btn{position:absolute;top:18px;right:18px;width:30px;height:30px;border-radius:50%;background:var(--panel-2);border:1px solid var(--line);color:var(--text);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;}
+
+  .tier-name{font-size:11.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--brass);font-weight:700;margin:18px 0 8px;}
+  .tier-name:first-child{margin-top:0;}
+  .opt{border:1px solid var(--line);border-radius:12px;padding:13px;margin-bottom:9px;background:var(--panel-2);}
+  .opt-name{font-size:14px;font-weight:600;line-height:1.3;}
+  .opt-meta{font-size:12.5px;color:var(--muted);margin-top:5px;line-height:1.6;}
+  .opt-meta b{color:var(--text);font-weight:600;}
+  .pick-btn{margin-top:10px;width:100%;background:transparent;border:1px solid var(--sage);color:var(--sage);border-radius:8px;padding:8px;font-size:12.5px;font-weight:600;font-family:'Inter';cursor:pointer;}
+  .pick-btn:hover{background:var(--sage-soft);}
+  .empty{border:1px dashed var(--line);border-radius:12px;padding:16px;color:var(--muted);font-size:13px;line-height:1.6;background:rgba(255,255,255,0.02);}
+  .empty b{color:var(--text);}
+
+  .confirm-box{background:var(--sage-soft);border:1px solid rgba(142,163,119,0.45);border-radius:12px;padding:16px;}
+  .qty-row{display:flex;align-items:center;gap:10px;margin-top:10px;}
+  .qty-row input{width:90px;background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px 10px;font-size:14px;font-family:'Inter';}
+  .qty-row label{font-size:12.5px;color:var(--muted);}
+  .btn-row{display:flex;gap:8px;margin-top:14px;}
+  .done-btn{flex:1;background:var(--sage);color:#16210f;border:none;border-radius:9px;padding:10px;font-size:13px;font-weight:700;font-family:'Inter';cursor:pointer;}
+  .skip-btn{flex:1;background:transparent;color:var(--muted);border:1px solid var(--line);border-radius:9px;padding:10px;font-size:13px;font-family:'Inter';cursor:pointer;}
+  .change-link{display:block;text-align:center;margin-top:10px;font-size:12px;color:var(--muted);cursor:pointer;text-decoration:underline;}
+
+  .sum-row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:12px 0;border-bottom:1px solid var(--line);}
+  .sum-row:last-of-type{border-bottom:none;}
+  .sum-title{font-size:13.5px;font-weight:600;}
+  .sum-sub{font-size:12px;color:var(--muted);margin-top:3px;}
+  .sum-right{text-align:right;flex:none;}
+  .sum-price{font-size:13.5px;font-weight:600;}
+  .sum-qty{display:flex;align-items:center;gap:6px;margin-top:5px;}
+  .sum-qty input{width:60px;background:var(--panel-2);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:4px 6px;font-size:12.5px;font-family:'Inter';text-align:center;}
+  .sum-warn{color:var(--warn);font-size:12px;font-weight:600;}
+  .total-box{margin-top:16px;padding:16px;border-radius:12px;background:var(--panel-2);border:1px solid var(--line);}
+  .total-box .row{display:flex;justify-content:space-between;font-size:13.5px;margin-bottom:6px;}
+  .total-box .row b{font-family:'Fraunces',serif;font-size:19px;font-weight:500;}
+  .gap-box{margin-top:14px;padding:14px;border-radius:12px;background:var(--warn-soft);border:1px solid rgba(217,154,78,0.4);}
+  .gap-box .t{font-size:12px;font-weight:700;color:var(--warn);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;}
+  .gap-box ul{margin:0;padding-left:18px;font-size:13px;color:var(--text);line-height:1.7;}
+  .footnote{margin-top:16px;font-size:11.5px;color:var(--muted);line-height:1.6;text-align:center;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">Карта снабжения</div>
+  <h1>Наведи, выбери, посчитай</h1>
+  <p class="lede">Нажми на метку, чтобы увидеть варианты покупки в Украине. Снизу — общая смета.</p>
+  <div class="legend">
+    <span><i class="l-none"></i> нет данных</span>
+    <span><i class="l-found"></i> есть варианты</span>
+    <span><i class="l-sel"></i> выбрано</span>
+  </div>
+  <div class="frame" id="frame">
+    <img src="data:image/jpeg;base64,__IMG_B64__" alt="Рендер">
+    <div id="pins"></div>
+  </div>
+  <p class="footnote">Позиции и варианты подобраны автоматически — перед закупкой стоит свериться у поставщика.</p>
+</div>
+
+<div class="barwrap">
+  <div class="bar">
+    <div class="bar-prog">Выбрано <b id="progCount">0</b> из <b id="progTotal">0</b></div>
+    <button class="bar-btn" id="openSummary">Смета →</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay"></div>
+<div class="sheet" id="sheet">
+  <div class="close-btn" id="closeBtn">&times;</div>
+  <div class="sheet-handle"></div>
+  <div id="sheetBody"></div>
+</div>
+
+<script type="application/json" id="items-data">__ITEMS_JSON__</script>
+<script>
+try{ window.Telegram.WebApp.expand(); }catch(e){}
+
+const items = JSON.parse(document.getElementById('items-data').textContent);
+const state = {}; // id -> {tierIdx, optIdx, qty}
+const pinsEl = document.getElementById('pins');
+const overlay = document.getElementById('overlay');
+const sheet = document.getElementById('sheet');
+const sheetBody = document.getElementById('sheetBody');
+
+function tiersOf(it){ return (it.data && it.data.tiers) || []; }
+function hasOptions(it){ return tiersOf(it).some(t => t.options && t.options.length>0); }
+
+function pinClass(it){
+  const s = state[it.id];
+  if(s && s.optIdx !== undefined && s.optIdx !== null) return 'selected';
+  if(hasOptions(it)) return 'found';
+  return '';
+}
+
+function renderPins(){
+  pinsEl.innerHTML='';
+  items.forEach(it=>{
+    const p = document.createElement('div');
+    p.className = 'pin ' + pinClass(it);
+    p.style.left = it.x+'%'; p.style.top = it.y+'%';
+    p.innerHTML = '<div class="ring"></div><div class="core"></div>';
+    p.addEventListener('click', ()=>openItem(it.id));
+    pinsEl.appendChild(p);
+  });
+  const selCount = items.filter(it=> state[it.id] && state[it.id].optIdx !== undefined && state[it.id].optIdx !== null).length;
+  document.getElementById('progCount').textContent = selCount;
+  document.getElementById('progTotal').textContent = items.length;
+}
+
+function openItem(id){
+  const it = items.find(i=>i.id===id);
+  if(!state[id]) state[id] = {tierIdx:null, optIdx:null, qty:null};
+  renderSheetFor(it);
+  overlay.classList.add('show'); sheet.classList.add('show');
+}
+
+function renderSheetFor(it){
+  const s = state[it.id];
+  let html = `<div class="sheet-eyebrow">${it.eyebrow}</div><h2>${it.title}</h2><p class="sheet-desc">${it.desc||''}</p>`;
+
+  if(s.optIdx !== undefined && s.optIdx !== null){
+    const tiers = tiersOf(it);
+    const opt = tiers[s.tierIdx].options[s.optIdx];
+    html += `<div class="confirm-box">
+      <div class="opt-name">✓ ${opt.name}</div>
+      <div class="opt-meta"><b>${opt.price_label||'уточнить'}</b> · ${opt.supplier||''}</div>
+      <div class="qty-row"><label>Количество</label><input type="number" min="0" step="0.1" value="${s.qty!==null?s.qty:''}" id="qtyInput" placeholder="можно позже"><label>${it.unit}</label></div>
+      <div class="btn-row">
+        <button class="done-btn" id="saveQty">Сохранить</button>
+        <button class="skip-btn" id="skipQty">Укажу позже</button>
+      </div>
+    </div>
+    <div class="change-link" id="changeLink">Выбрать другой вариант</div>`;
+    sheetBody.innerHTML = html;
+    document.getElementById('saveQty').addEventListener('click', ()=>{
+      const v = parseFloat(document.getElementById('qtyInput').value);
+      state[it.id].qty = isNaN(v) ? null : v;
+      renderPins(); closeSheet();
+    });
+    document.getElementById('skipQty').addEventListener('click', ()=>{ renderPins(); closeSheet(); });
+    document.getElementById('changeLink').addEventListener('click', ()=>{
+      state[it.id].optIdx = null; state[it.id].tierIdx = null;
+      renderSheetFor(it);
+    });
+    return;
+  }
+
+  const tiers = tiersOf(it);
+  if(!tiers.length || tiers.every(t=>!t.options || t.options.length===0)){
+    html += `<div class="empty"><b>Пока не найдено.</b><br>${it.note || 'По этой позиции не удалось подобрать вариант автоматически — впиши источник вручную при оформлении сметы.'}</div>`;
+    sheetBody.innerHTML = html; return;
+  }
+
+  tiers.forEach((tier,tIdx)=>{
+    if(!tier.options || !tier.options.length) return;
+    if(tier.name) html += `<div class="tier-name">${tier.name}</div>`;
+    tier.options.forEach((o,oIdx)=>{
+      html += `<div class="opt">
+        <div class="opt-name">${o.name}</div>
+        <div class="opt-meta"><b>${o.price_label||'уточнить'}</b> · ${o.supplier||''}<br>${o.avail||''}</div>
+        <button class="pick-btn" data-t="${tIdx}" data-o="${oIdx}">Выбрать этот вариант</button>
+      </div>`;
+    });
+  });
+
+  sheetBody.innerHTML = html;
+  sheetBody.querySelectorAll('.pick-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      state[it.id].tierIdx = parseInt(btn.dataset.t);
+      state[it.id].optIdx = parseInt(btn.dataset.o);
+      renderSheetFor(it);
+    });
+  });
+}
+
+function closeSheet(){ overlay.classList.remove('show'); sheet.classList.remove('show'); }
+overlay.addEventListener('click', closeSheet);
+document.getElementById('closeBtn').addEventListener('click', closeSheet);
+document.getElementById('openSummary').addEventListener('click', renderSummary);
+
+function recalcAndRenderSummary(){
+  let total = 0; let missing = [];
+  let html = `<div class="sheet-eyebrow">Итог</div><h2>Смета (черновик)</h2><div>`;
+
+  items.forEach(it=>{
+    const s = state[it.id];
+    const selected = s && s.optIdx !== undefined && s.optIdx !== null;
+    if(!selected){ missing.push(it.title); return; }
+  });
+
+  items.forEach(it=>{
+    const s = state[it.id];
+    const selected = s && s.optIdx !== undefined && s.optIdx !== null;
+    if(selected){
+      const tiers = tiersOf(it);
+      const opt = tiers[s.tierIdx].options[s.optIdx];
+      const hasQty = s.qty !== null && s.qty !== undefined && !isNaN(s.qty);
+      const lineKnown = typeof opt.price_uah === 'number' && hasQty;
+      const lineTotal = lineKnown ? opt.price_uah * s.qty : null;
+      if(lineKnown) total += lineTotal;
+      html += `<div class="sum-row">
+        <div><div class="sum-title">${it.title}</div><div class="sum-sub">${opt.name}</div></div>
+        <div class="sum-right">
+          <div class="sum-price">${lineKnown ? Math.round(lineTotal).toLocaleString('ru-RU')+' ₴' : 'уточнить'}</div>
+          <div class="sum-qty"><input type="number" min="0" step="0.1" data-id="${it.id}" value="${hasQty?s.qty:''}" placeholder="—"><span class="sum-sub">${it.unit}</span></div>
+        </div>
+      </div>`;
+    } else {
+      html += `<div class="sum-row">
+        <div><div class="sum-title">${it.title}</div><div class="sum-warn">не выбрано</div></div>
+        <div class="sum-right"><div class="sum-sub">—</div></div>
+      </div>`;
+    }
+  });
+  html += `</div>`;
+
+  html += `<div class="total-box">
+    <div class="row"><span>Известная часть сметы</span><b>${Math.round(total).toLocaleString('ru-RU')} ₴</b></div>
+    <div class="row"><span style="color:var(--muted)">Без количества или с ценой «уточнить» в сумму не входят</span></div>
+  </div>`;
+
+  if(missing.length){
+    html += `<div class="gap-box"><div class="t">⚠ Требует уточнения дизайнера/сметчика</div><ul>`;
+    missing.forEach(m=> html += `<li>${m}</li>`);
+    html += `</ul></div>`;
+  }
+
+  sheetBody.innerHTML = html;
+  sheetBody.querySelectorAll('.sum-qty input').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const id = parseInt(inp.dataset.id);
+      const v = parseFloat(inp.value);
+      state[id].qty = isNaN(v) ? null : v;
+      recalcAndRenderSummary();
+    });
+  });
+}
+
+function renderSummary(){
+  recalcAndRenderSummary();
+  overlay.classList.add('show'); sheet.classList.add('show');
+}
+
+renderPins();
+</script>
+</body>
+</html>
