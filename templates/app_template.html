@@ -64,6 +64,7 @@
   .opt-meta b{color:var(--text);font-weight:600;}
   .pick-btn{margin-top:10px;width:100%;background:transparent;border:1px solid var(--sage);color:var(--sage);border-radius:8px;padding:8px;font-size:12.5px;font-weight:600;font-family:'Inter';cursor:pointer;}
   .pick-btn:hover{background:var(--sage-soft);}
+  .opt-link{display:inline-flex;align-items:center;gap:5px;margin-top:9px;font-size:12.5px;color:var(--brass);text-decoration:none;border-bottom:1px solid rgba(199,154,94,0.4);cursor:pointer;}
   .empty{border:1px dashed var(--line);border-radius:12px;padding:16px;color:var(--muted);font-size:13px;line-height:1.6;background:rgba(255,255,255,0.02);}
   .empty b{color:var(--text);}
 
@@ -212,12 +213,26 @@ function renderSheetFor(it){
       html += `<div class="opt">
         <div class="opt-name">${o.name}</div>
         <div class="opt-meta"><b>${o.price_label||'уточнить'}</b> · ${o.supplier||''}<br>${o.avail||''}</div>
+        ${o.url ? `<a class="opt-link" data-url="${o.url}" href="${o.url}">Открыть сайт →</a>` : ''}
         <button class="pick-btn" data-t="${tIdx}" data-o="${oIdx}">Выбрать этот вариант</button>
       </div>`;
     });
   });
 
   sheetBody.innerHTML = html;
+  sheetBody.querySelectorAll('.opt-link').forEach(a=>{
+    a.addEventListener('click', (e)=>{
+      e.preventDefault();
+      const url = a.dataset.url;
+      try{
+        if(window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.openLink){
+          window.Telegram.WebApp.openLink(url);
+          return;
+        }
+      }catch(err){}
+      window.open(url, '_blank');
+    });
+  });
   sheetBody.querySelectorAll('.pick-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       state[it.id].tierIdx = parseInt(btn.dataset.t);
