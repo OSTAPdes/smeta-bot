@@ -46,16 +46,19 @@ claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-CHUNK_SIZE = 4
+CHUNK_SIZE = 6
 GRID_DIVISIONS = 10
 
 # Проверенные специализированные сайты по категориям — поиск ограничивается ими,
-# чтобы не блуждать по случайным страницам и сразу попадать в хорошие источники.
+# обобщённые маркетплейсы (Prom, Rozetka и т.п.) сюда намеренно не входят.
 CATEGORY_DOMAINS = {
     "lighting": ["linija-svitla.ua", "svetilnikof.com.ua", "svetua.com.ua", "lampa.od.ua", "citylight.com.ua", "lustralux.com.ua"],
-    "tile_stone": ["plitka.ua", "plitkashop.com.ua", "epicentrk.ua", "cersanit.in.ua", "leoceramika.com"],
     "wood_decor": ["kronospan.com", "egger.com", "kronas.com.ua", "agtplus.ua", "scandiwall.com.ua"],
-    "furniture": ["prom.ua", "rozetka.com.ua", "mebelok.com", "mebel-club.com.ua"],
+    "tile": ["plitka.ua", "plitkashop.com.ua", "cersanit.in.ua", "leoceramika.com", "topovi.com.ua", "stone.kiev.ua", "supers.com.ua"],
+    "laminate": ["my-floor.com.ua", "parketiko.com.ua", "laminat-parketdoska.com.ua"],
+    "paint": ["ncscolour.com.ua", "tikkurila-shop.com.ua", "colorstudio.com.ua"],
+    "furniture": ["mebelok.com", "klen.ua", "ddn.ua", "dobralavka.ua", "taburetka.ua"],
+    "quartz_marble": ["topovi.com.ua", "stone.kiev.ua", "supers.com.ua", "kitstone.kiev.ua"],
 }
 
 SUPPORT_LINE = f"\n\nПоддержка: https://t.me/{SUPPORT_USERNAME}" if SUPPORT_USERNAME else ""
@@ -95,7 +98,7 @@ def try_consume_quota(user_id: int) -> bool:
     return True
 
 
-def resize_for_claude(raw_bytes: bytes, max_side: int = 1280) -> bytes:
+def resize_for_claude(raw_bytes: bytes, max_side: int = 1150) -> bytes:
     img = Image.open(BytesIO(raw_bytes)).convert("RGB")
     w, h = img.size
     if max(w, h) > max_side:
@@ -180,7 +183,7 @@ ANALYSIS_PROMPT_TEMPLATE = """Ты — ассистент архитектора
 - unit: "м²" для отделки стен/потолка/пола, "шт." для мебели/светильников
 - tiered: true для отделки деревом/ДСП или плиткой/камнем (нужен подбор: инженерный материал + натуральный аналог); false для остального
 - color_match: true, если это однотонная окрашенная поверхность, для которой имеет смысл подбирать цвет по вееру NCS; иначе false
-- search_category: одно из ровно этих значений — "lighting" (люстры, бра, светильники), "wood_decor" (деревянная отделка, ДСП-панели, фасады из дерева/ДСП), "tile_stone" (плитка, керамогранит, камень на полу/стенах), "furniture" (диваны, шкафы, кровати, столы, кресла), "paint_color" (просто окрашенная поверхность без определённого материала), "other" (если не подходит ни одно)
+- search_category: одно из ровно этих значений — "lighting" (люстры, бра, светильники), "wood_decor" (деревянная отделка, ДСП-панели, фасады из дерева/ДСП), "tile" (керамическая плитка/керамогранит на полу/стенах), "laminate" (ламинат, паркетная доска), "paint" (просто окрашенная поверхность), "furniture" (диваны, шкафы, кровати, столы, кресла), "quartz_marble" (столешницы, подоконники, облицовка из камня/кварцевого агломерата), "other" (если не подходит ни одно)
 
 Ответь СТРОГО в виде JSON-массива объектов с этими полями. Никакого текста до или после JSON, никакого markdown."""
 
@@ -254,11 +257,15 @@ def build_batch_research_prompt(category: str, chunk: list) -> str:
                      "на заказ у столярной мастерской, и предлагай готовый заводской аналог только если "
                      "он реально близко совпадает по виду.")
         if it.get("color_match"):
-            extra += (" Это однотонная окрашенная поверхность — обязательно подбери и укажи ближайший код "
-                       "по каталогу NCS в поле ncs_estimate, и где в Украине можно заколеровать краску в этот цвет.")
+            extra += (" Это однотонная окрашенная поверхность. Зайди на ncscolour.com.ua (официальный "
+                      "представитель веера NCS Index 2050 в Украине) и подбери ближайший цвет именно по "
+                      "этому каталогу — формат кода должен быть стандартным NCS, например 'NCS S 1502-Y' "
+                      "(буква S, 4 цифры — чёрная/цветная составляющая, затем буква оттенка). Укажи код в "
+                      "поле ncs_estimate. Также через colorstudio.com.ua или tikkurila-shop.com.ua укажи, "
+                      "где в Украине можно заколеровать краску в этот код.")
         lines.append(
             f"- id {it['id']}: {it.get('title')} ({it.get('eyebrow')}). Описание: {it.get('desc')}. "
-            f"Тип подбора: {'двухуровневый — сначала инженерный материал/декор, затем натуральный аналог' if it.get('tiered') else 'обычный — 1-2 близких товара'}."
+            f"Тип подбора: {'двухуровневый — сначала инженерный материал/декор, затем натуральный аналог' if it.get('tiered') else 'обычный — 1 максимально точный вариант, второй только если тоже очень похож'}."
             f"{extra}"
         )
     items_block = "\n".join(lines)
@@ -276,7 +283,8 @@ def build_batch_research_prompt(category: str, chunk: list) -> str:
 
 ОБЩИЕ ПРАВИЛА:
 - {domain_rule}
-- НИКОГДА не используй российские сайты (.ru, ya.ru, ozon.ru, wildberries и подобные) — это нерелевантно для украинского рынка.
+- НИКОГДА не используй российские сайты (.ru, ya.ru, ozon.ru, wildberries и подобные), и НИКОГДА не используй общие маркетплейсы вроде prom.ua, rozetka.com.ua, OLX — только специализированные профильные сайты из списка выше.
+- ТОЧНОСТЬ ВАЖНЕЕ КОЛИЧЕСТВА. Предлагай только то, что реально похоже на описание по цвету, фактуре и форме. Если уверенно похожего варианта только один — верни один, не добавляй второй просто для количества. Максимум 2 варианта на уровень, и только если оба действительно близкие.
 - Если точного совпадения нет — всё равно найди МАКСИМАЛЬНО близкий по виду аналог среди указанных сайтов, а не оставляй позицию пустой. Пустой список — только если реально ничего похожего нет даже среди этих сайтов.
 - В поле "url" — ссылка ДОЛЖНА вести на страницу КОНКРЕТНОГО найденного товара (карточка товара с фото, ценой и кнопкой купить), а не на раздел каталога и не на главную сайта. Архитектор кликает по ссылке и должен сразу увидеть именно ту модель, которую ты предлагаешь — а не общую страницу, на которой надо искать самому.
 - Цены и поставщиков бери ТОЛЬКО из реальных результатов поиска.
@@ -291,7 +299,7 @@ def build_batch_research_prompt(category: str, chunk: list) -> str:
 
 def research_batch(category: str, chunk: list) -> dict:
     prompt = build_batch_research_prompt(category, chunk)
-    max_uses = min(8, max(3, len(chunk) * 2))
+    max_uses = min(7, max(3, len(chunk) + 2))
     tool_def = {"type": "web_search_20250305", "name": "web_search", "max_uses": max_uses}
     domains = CATEGORY_DOMAINS.get(category)
     if domains:
