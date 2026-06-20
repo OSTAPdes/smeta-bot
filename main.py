@@ -34,6 +34,10 @@ OWNER_USER_IDS = {
 MAX_TRIES_PER_USER = int(os.environ.get("MAX_TRIES_PER_USER", "2"))
 SUPPORT_USERNAME = os.environ.get("SUPPORT_USERNAME", "").lstrip("@")
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
+# Когда true — бот открыт для любого пользователя Telegram, ALLOWED_USER_IDS
+# не проверяется вообще. Лимит MAX_TRIES_PER_USER при этом остаётся главной
+# защитой от случайного перерасхода — обязательно держи его разумным.
+PUBLIC_BOT = os.environ.get("PUBLIC_BOT", "false").lower() in ("1", "true", "yes")
 
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")  # для анализа картинки И для поиска — точность важнее экономии
 
@@ -78,6 +82,8 @@ SUPPORT_LINE = f"\n\nПоддержка: https://t.me/{SUPPORT_USERNAME}" if SUP
 
 
 def is_allowed(user_id: int) -> bool:
+    if PUBLIC_BOT:
+        return True
     return user_id in ALLOWED_USER_IDS or user_id in OWNER_USER_IDS
 
 
@@ -94,21 +100,27 @@ def save_usage(data: dict):
     USAGE_FILE.write_text(json.dumps(data))
 
 
-def try_consume_quota(user_id: int) -> bool:
+_usage_lock = asyncio.Lock()
+
+
+async def try_consume_quota(user_id: int) -> bool:
     """True — можно обрабатывать. Владельцам лимит не считаем.
-    ВАЖНО: счётчик хранится в файле на диске сервиса — при передеплое
-    Railway/Render контейнер обычно пересоздаётся и счётчик обнуляется.
-    Это просто дружелюбное ограничение, а не железная защита — основной
-    барьер от перерасхода держи в лимите трат на console.anthropic.com."""
+    Проверка и запись объединены под блокировкой, чтобы два почти
+    одновременных запроса от одного человека не проскочили оба разом.
+    ВАЖНО: счётчик хранится в файле на диске сервиса — без подключённого
+    Volume (см. STORAGE_DIR) он обнуляется при каждом передеплое. Это
+    дружелюбное ограничение, а не железная защита — основной барьер от
+    перерасхода всё равно держи в лимите трат на console.anthropic.com."""
     if user_id in OWNER_USER_IDS:
         return True
-    usage = load_usage()
-    count = usage.get(str(user_id), 0)
-    if count >= MAX_TRIES_PER_USER:
-        return False
-    usage[str(user_id)] = count + 1
-    save_usage(usage)
-    return True
+    async with _usage_lock:
+        usage = load_usage()
+        count = usage.get(str(user_id), 0)
+        if count >= MAX_TRIES_PER_USER:
+            return False
+        usage[str(user_id)] = count + 1
+        save_usage(usage)
+        return True
 
 
 def resize_for_claude(raw_bytes: bytes, max_side: int = 1150) -> bytes:
@@ -384,7 +396,14 @@ async def handle_photo(message: Message):
         )
         return
 
-    if not try_consume_quota(user_id):
+    if message.media_group_id:
+        await message.answer(
+            f"Пришли, пожалуйста, одну картинку отдельным сообщением (не альбомом из нескольких фото) — "
+            f"каждая попытка считается строго по одному фото.{SUPPORT_LINE}"
+        )
+        return
+
+    if not await try_consume_quota(user_id):
         await message.answer(
             f"Пробный лимит ({MAX_TRIES_PER_USER} разбора) на этом аккаунте исчерпан. "
             f"Если нужно больше — напиши в поддержку.{SUPPORT_LINE}"
