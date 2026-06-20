@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import uuid
 import base64
 import asyncio
@@ -37,9 +38,13 @@ PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")  # для анализа картинки И для поиска — точность важнее экономии
 
 BASE_DIR = Path(__file__).parent
-RENDERS_DIR = BASE_DIR / "renders"
-RENDERS_DIR.mkdir(exist_ok=True)
-USAGE_FILE = BASE_DIR / "usage.json"
+# Если задана STORAGE_DIR (например, смонтированный Volume на Railway) — храним
+# рендеры и счётчик попыток там, чтобы они переживали передеплой. Без неё —
+# как раньше, в папке рядом с кодом (стирается при каждом редеплое).
+STORAGE_DIR = Path(os.environ.get("STORAGE_DIR", str(BASE_DIR)))
+RENDERS_DIR = STORAGE_DIR / "renders"
+RENDERS_DIR.mkdir(parents=True, exist_ok=True)
+USAGE_FILE = STORAGE_DIR / "usage.json"
 TEMPLATE = (BASE_DIR / "templates" / "app_template.html").read_text(encoding="utf-8")
 
 claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -201,9 +206,11 @@ VERIFY_PROMPT_TEMPLATE = """Та же картинка с сеткой ({cols} �
 
 def analyze_render(overlay_b64: str, media_type: str, cols: int, rows: int) -> list:
     prompt = ANALYSIS_PROMPT_TEMPLATE.format(cols=cols, last_col=chr(64 + cols), rows=rows)
+    t0 = time.monotonic()
     msg = claude.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=2000,
+        timeout=90.0,
         messages=[{
             "role": "user",
             "content": [
@@ -212,6 +219,7 @@ def analyze_render(overlay_b64: str, media_type: str, cols: int, rows: int) -> l
             ],
         }],
     )
+    log.info("analyze_render done in %.1fs", time.monotonic() - t0)
     text = "".join(b.text for b in msg.content if b.type == "text")
     items = extract_json(text)
     for it in items:
@@ -225,9 +233,11 @@ def verify_items(overlay_b64: str, media_type: str, items: list, cols: int, rows
         cols=cols, last_col=chr(64 + cols), rows=rows,
         items_json=json.dumps(draft, ensure_ascii=False), count=len(draft),
     )
+    t0 = time.monotonic()
     msg = claude.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=2000,
+        timeout=90.0,
         messages=[{
             "role": "user",
             "content": [
@@ -236,6 +246,7 @@ def verify_items(overlay_b64: str, media_type: str, items: list, cols: int, rows
             ],
         }],
     )
+    log.info("verify_items done in %.1fs", time.monotonic() - t0)
     text = "".join(b.text for b in msg.content if b.type == "text")
     try:
         fixed = extract_json(text)
@@ -304,12 +315,15 @@ def research_batch(category: str, chunk: list) -> dict:
     domains = CATEGORY_DOMAINS.get(category)
     if domains:
         tool_def["allowed_domains"] = domains
+    t0 = time.monotonic()
     resp = claude.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=3000,
+        timeout=120.0,
         tools=[tool_def],
         messages=[{"role": "user", "content": prompt}],
     )
+    log.info("research_batch[%s, %d items] done in %.1fs", category, len(chunk), time.monotonic() - t0)
     text = "".join(b.text for b in resp.content if b.type == "text")
     try:
         parsed = extract_json(text)
@@ -366,6 +380,7 @@ async def handle_photo(message: Message):
         return
 
     status = await message.answer("Анализирую рендер — это займёт около минуты…")
+    t_total = time.monotonic()
 
     photo = message.photo[-1]
     file = await bot.get_file(photo.file_id)
@@ -394,7 +409,11 @@ async def handle_photo(message: Message):
             tasks.append((cat, group_items[i:i + CHUNK_SIZE]))
 
     async def do_task(cat, chunk):
-        return await asyncio.to_thread(research_batch, cat, chunk)
+        try:
+            return await asyncio.to_thread(research_batch, cat, chunk)
+        except Exception:
+            log.exception("research_batch failed for category %s (%d items) — leaving them empty", cat, len(chunk))
+            return {it["id"]: {"tiers": [], "ncs_estimate": None} for it in chunk}
 
     chunk_results = await asyncio.gather(*(do_task(c, ch) for c, ch in tasks))
     data_by_id = {}
@@ -405,6 +424,7 @@ async def handle_photo(message: Message):
 
     render_id = uuid.uuid4().hex[:10]
     render_app_page(render_id, img_b64, items)
+    log.info("Render %s done in %.1fs total", render_id, time.monotonic() - t_total)
 
     if not PUBLIC_URL:
         await message.answer("Карта готова, но PUBLIC_URL ещё не настроен — добавь его и пришли рендер ещё раз.")
