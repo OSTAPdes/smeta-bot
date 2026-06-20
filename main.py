@@ -4,6 +4,7 @@ import uuid
 import base64
 import asyncio
 import logging
+from io import BytesIO
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -14,6 +15,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
+from PIL import Image
 import anthropic
 
 logging.basicConfig(level=logging.INFO)
@@ -41,6 +43,20 @@ dp = Dispatcher()
 def is_allowed(user_id: int) -> bool:
     # Если список пуст — бот закрыт для всех, пока явно не добавишь ID
     return user_id in ALLOWED_USER_IDS
+
+
+def resize_for_claude(raw_bytes: bytes, max_side: int = 1280) -> bytes:
+    # Рендеры из 3ds Max часто очень большого разрешения — это напрямую
+    # увеличивает стоимость анализа картинки. Уменьшаем перед отправкой,
+    # детали для распознавания материалов сохраняются с запасом.
+    img = Image.open(BytesIO(raw_bytes)).convert("RGB")
+    w, h = img.size
+    if max(w, h) > max_side:
+        scale = max_side / max(w, h)
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+    out = BytesIO()
+    img.save(out, format="JPEG", quality=85, optimize=True)
+    return out.getvalue()
 
 
 def extract_json(text: str):
@@ -162,7 +178,7 @@ def research_item(item: dict) -> dict:
     resp = claude.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=1800,
-        tools=[{"type": "web_search_20250305", "name": "web_search"}],
+        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
         messages=[{"role": "user", "content": prompt}],
     )
     text = "".join(b.text for b in resp.content if b.type == "text")
@@ -210,7 +226,8 @@ async def handle_photo(message: Message):
     photo = message.photo[-1]
     file = await bot.get_file(photo.file_id)
     file_io = await bot.download_file(file.file_path)
-    img_b64 = base64.b64encode(file_io.read()).decode()
+    resized_bytes = resize_for_claude(file_io.read())
+    img_b64 = base64.b64encode(resized_bytes).decode()
 
     try:
         items = await asyncio.to_thread(analyze_render, img_b64, "image/jpeg")
